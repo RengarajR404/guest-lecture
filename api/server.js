@@ -6,7 +6,7 @@ const nodemailer =  require('nodemailer');
 const randomstring = require('randomstring');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-//const {authenticate} = require('../middleware/authenticate')
+const {authenticate} = require('../middleware/authenticate')
 const {json} = require("express");
 const session = require("express-session");
 const cookieParser = require("cookie-parser");
@@ -47,13 +47,10 @@ app.post('/login', async (req, res) => {
         const user_info = await database.collection("User_information");
 
         const user = await user_info.findOne({username: username});
-        console.log(user.username);
-        console.log(user.role);
-        req.session.username = user.username;
-        req.session.role = user.role;
+        req.session.user = user;
         if (!user) {
             console.log("User not found");
-            return res.status(401).send('User not found ');
+            return res.status(401).send('User not found');
         }
         const isPasswordCorrect = await  bcrypt.compare(password, user.password);
         console.log(isPasswordCorrect);
@@ -62,15 +59,6 @@ app.post('/login', async (req, res) => {
             return res.status(401).send('Username or password incorrect');
         }
         console.log("password correct");
-        // If the password is correct, create a token and send it back to the client
-        const token = await generateToken(user.username, user.role);
-        console.log(token);
-        session({
-            secret: secret_key,
-            username: user.username,
-            role: user.role
-        })
-        //res.cookie('session_id', token, { maxAge: 900000, secure: false, sameSite: 'None' }).status(200);
         res.send("User Login successful");
     }
     catch (e) {
@@ -79,7 +67,9 @@ app.post('/login', async (req, res) => {
 });
 app.post("/register", async (req, res) =>{
 
+
 });
+/*
 function generateToken(username, role) {
     const userData = {
         username: username,
@@ -88,6 +78,8 @@ function generateToken(username, role) {
      const token =  jwt.sign(userData, secret_key, {expiresIn : '1h'});
      return token;
 }
+
+ */
 
 function verifyToken(token, username, role){
     try {
@@ -103,81 +95,33 @@ function verifyToken(token, username, role){
 
 }
 
-app.post("/dashboard",   async (req, res) =>{
-    const {username, role, session_id} = req.body;
-    try{
-        const valid = await verifyToken(session_id, username, role);
-        if(!valid){
-            res.status(403);
-            res.send("You are not authorized to view this page");
-        }
-        else{
-            console.log(username);
-            console.log(role);
-            const client = new MongoClient(uri);
-            await client.connect();
-            const database = await client.db("Guest_Lecture");
-            const user_info = await database.collection("User_information");
-            const user = await user_info.findOne({username: username});
-            const faculty = await user_info.find({role:faculty});
-            if (!user) {
-                console.log("User not found");
-                return res.status(401).send('User not found');
+app.get("/dashboard",  (req, res) =>{
+    const {username, role} = req.body;
+    const check_role = req.session.user.role
+    const check_username =  req.session.user.username;
+    const valid = check_role === role;
+    const valid2 = check_username === username
 
-            } else {
-                if(role === "student"){
-                    const details = {
-                        "username" : user.username,
-                        "role" : user.role,
-                        "areas_of_interest" : user.areas_of_interest,
-                        "department" : user.department,
-                        "Lectures_attended" : user.lectures_attended
-                    }
-
-                }
-                else if(role ==='faculty'){
-                    const details = {
-                        "username": user.username,
-                        "role": user.role,
-                        "areas_of_interest": user.areas_of_interest,
-                        "department": user.department,
-                        "lectures_taken": user.lectures_taken
-                    }
-                }
-                else if(role ==='admin'){
-                    //const details
-                }
-                
-                return res.status(200).send(details);
-            }
-        }
+    if(!(valid && valid2)){
+       res.status(503).send("Not authorised");
     }
-        catch (e) {
-            console.error(e);
-            res.status(500).send("Internal Server error");
-        }
+    else{
+        res.status(200).send(req.session.user);
+    }
 
 });
 
 
-app.post("/events", async (req, res) =>{
-    const {username, session_id} = req.body;
+app.get("/events", async (req, res) =>{
+
     try{
-        const valid = verifyToken(session_id, username, "student");
-        if(!valid){
-            res.status(403);
-            res.send("You are not authorized to view this page");
-        }
-        else{
             const client = new MongoClient(uri);
             await client.connect();
             const database = await client.db("Guest_Lecture");
             const collection = await database.collection("Lectures");
             const data = await collection.find().toArray();
-            res.status(200);
-            console.log(data);
-            res.send(data);
-        }
+            res.status(200).send(data)
+
         
     }
     catch (e) {
@@ -210,16 +154,17 @@ app.post("/events/register-event", async (req, res) =>{
 
 
 app.post("/faculty/create-event", async (req, res) =>{
-    const {username, role, session_id} = req.body;
+    const {username, role, event_details} = req.body;
     try{
-        const valid = verifyToken(session_id, username, "faculty");
-        if(!valid){
-            res.status(403);
-            res.send("You are not authorized to view this page");
+        if(req.session.user.role === 'student') {
+            res.status(503).send("Student cannot create events");
+        }
+        if(! (req.session.user.username === username && req.session.user.role === role)) {
+            res.status(503).send("User is not correctly signed in")
         }
         else{
-            res.status(200);
-            res.send("You are authorized to view this page");
+            
+
         }
 
     }
@@ -376,7 +321,8 @@ function send_otp(email, username){
             from: 'guest.lecture.amrita@gmail.com',
             to: email,
             subject: 'Your OTP for verification of your account in Amrita Guest lecture platform',
-            text: `Dear , ${username},\n\tYour OTP for verifying your account in Amrita Guest lecture application is,  ${otp}.`
+            text: `Dear , ${username},\n\tYour OTP for verifying your account in  Guest lecture application is\n <b>,  ${otp} </b>\n.
+                                        If you have not requested for an OTP, kindly ingnore this email.`
         };
 
         // Send the email
@@ -402,6 +348,7 @@ function verify_otp( otp_sent, otp_rec){
 app.post('/send-otp', async (req, res) =>{
     const {username, email} = req.body;
     const otp = send_otp(email, username);
+    req.session.otp = otp;
 
     if(!otp){
         res.status(503).send("Error in server");
@@ -427,17 +374,12 @@ app.post('/verify-otp', (req, res) => {
         // Clear the OTP from the session
         req.session.otp = undefined;
         res.status(200).send('OTP verified.');
+
     } else {
         res.status(400).send('Invalid OTP.');
     }
 });
 
-const multer = require('multer');
-const path = require('path');
-const { promisify } = require('util');
-const fs = require('fs');
-const exec = promisify(require('child_process').exec);
-const crypto = require('crypto');
 
 
 const upload = multer({ dest: 'uploads/' });
@@ -454,7 +396,7 @@ function generateRandomFileName() {
 
 // Function to check if the file extension is executable
 function isExecutableExtension(filename) {
-    const executableExtensions = ['.exe', '.sh', '.bat', '.cmd'];
+    const executableExtensions = ['.exe', '.sh', '.bat', '.cmd', '.py'];
     const ext = path.extname(filename).toLowerCase();
     return executableExtensions.includes(ext);
 }
@@ -525,10 +467,6 @@ app.get('/files/:filename', (req, res, next) => {
 });
 
 
-// Start the server
-app.listen(3000, () => {
-    console.log('Server is running on port 3000');
-});
 
 
 
