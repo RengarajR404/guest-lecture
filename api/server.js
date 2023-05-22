@@ -16,6 +16,8 @@ const { promisify } = require('util');
 const fs = require('fs');
 const exec = promisify(require('child_process').exec);
 const crypto = require('crypto');
+const {genSalt} = require("bcrypt");
+const upload = multer({ dest: 'uploads/' });
 const app = express();
 const PORT = 4000;
 const secret_key = "9JxnBAyCMKcTWc0LdD7fI48gcJo1G2Lo78+SVpd56/c=";
@@ -66,6 +68,58 @@ app.post('/login', async (req, res) => {
     }
 });
 app.post("/register", async (req, res) =>{
+    const {username, name, email,  role, password, areas_of_interest, department } = req.body;
+    const client = new MongoClient(uri);
+    await client.connect();
+    const database = await client.db("Guest_Lecture");
+    const user_info = await database.collection("User_information");
+    const user = await user_info.findOne({username: username});
+    if(user){
+        res.status(503).send("User already present in the system Please login");
+    }
+    else{
+
+        if(role === 'faculty'){
+            try{
+            await user_info.insertOne({
+                username: username,
+                name: name,
+                email : email,
+                role: "faculty",
+                password: await bcrypt.hash(password, 10),
+                areas_of_interest: areas_of_interest,
+                verified_otp: false,
+                department: department,
+                lectures_taken: [],
+            });
+            res.status(200).send("User successfully created, Please verify the OTP sent to your mail address");
+            }
+            catch {
+                console.log("Error "+ e);
+                res.status(500).send("Internal Server Error");
+                }
+        }
+        else{
+            try{
+                await user_info.insertOne({
+                    username: username,
+                    name: name,
+                    email: email,
+                    role: "student",
+                    password: await bcrypt.hash(password, 10),
+                    areas_of_interest: areas_of_interest,
+                    verified_otp: false,
+                    department: department,
+                    lectures_attended: [],
+                });
+                res.status(200).send("User successfully created, Please verify the OTP sent to your mail address");
+            }
+            catch(e) {
+                res.status(500).send("Internal Server Error");
+
+            }
+        }
+    }
 
 
 });
@@ -371,7 +425,6 @@ app.post('/verify-otp', (req, res) => {
     const {username, email, otp} = req.body
     console.log(req.session.otp);
     if (otp && otp === req.session.otp) {
-        // Clear the OTP from the session
         req.session.otp = undefined;
         res.status(200).send('OTP verified.');
 
@@ -382,17 +435,8 @@ app.post('/verify-otp', (req, res) => {
 
 
 
-const upload = multer({ dest: 'uploads/' });
-
 // Configure static file serving
 app.use('/public', express.static(path.join(__dirname, 'public')));
-
-// Function to generate a random file name
-function generateRandomFileName() {
-    const randomBytes = crypto.randomBytes(16);
-    const uniqueFileName = randomBytes.toString('hex');
-    return uniqueFileName;
-}
 
 // Function to check if the file extension is executable
 function isExecutableExtension(filename) {
@@ -402,28 +446,32 @@ function isExecutableExtension(filename) {
 }
 
 // Endpoint for file upload
-app.post('/upload', upload.single('file'), (req, res, next) => {
-    // Check if a file was uploaded
-    if (!req.file) {
-        res.status(400).send('No file uploaded');
-        return;
-    }
 
-    // Generate a random file name
-    const uniqueFileName = generateRandomFileName();
+// Configure Multer to store files in the desired folder
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => {
+        // Extract the folder name from the request URL
+        const folderName = req.params.folderName;
+        // Set the destination folder path
+        const folderPath = path.join(__dirname, 'uploads', folderName);
+        // Call the callback function with the destination folder path
+        cb(null, folderPath);
+    },
+    filename: (req, file, cb) => {
+        // Use the original file name as the stored file name
+        cb(null, file.originalname);
+    },
+});
 
-    // Handle file upload and rename it
-    const tempPath = req.file.path;
-    const targetPath = path.join(__dirname, 'uploads', uniqueFileName);
 
-    fs.rename(tempPath, targetPath, (err) => {
-        if (err) {
-            next(err);
-            return;
-        }
 
-        res.status(200).send('File uploaded successfully');
-    });
+app.post('/uploads/:folderName', upload.single('file'), (req, res) => {
+    // File has been uploaded and stored in the specified folder
+    res.send('File uploaded successfully.');
+});
+
+app.listen(4000, () => {
+    console.log('Server is running on port 4000');
 });
 
 // Endpoint for viewing a file
