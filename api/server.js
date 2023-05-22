@@ -7,17 +7,12 @@ const randomstring = require('randomstring');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const {authenticate} = require('../middleware/authenticate')
-const {json} = require("express");
+const {json} = require('express');
 const session = require("express-session");
 const cookieParser = require("cookie-parser");
-const multer = require('multer');
-const path = require('path');
-const { promisify } = require('util');
+const multer = require("multer");
 const fs = require('fs');
-const exec = promisify(require('child_process').exec);
-const crypto = require('crypto');
-const {genSalt} = require("bcrypt");
-const upload = multer({ dest: 'uploads/' });
+const path = require('path');
 const app = express();
 const PORT = 4000;
 const secret_key = "9JxnBAyCMKcTWc0LdD7fI48gcJo1G2Lo78+SVpd56/c=";
@@ -150,17 +145,28 @@ function verifyToken(token, username, role){
 }
 
 app.get("/dashboard",  (req, res) =>{
-    const {username, role} = req.body;
-    const check_role = req.session.user.role
-    const check_username =  req.session.user.username;
-    const valid = check_role === role;
-    const valid2 = check_username === username
+    try {
+        const {username, role} = req.body;
+        const check_role = req.session.user.role
+        const check_username = req.session.user.username;
+        const valid = check_role === role;
+        const valid2 = check_username === username
 
-    if(!(valid && valid2)){
-       res.status(503).send("Not authorised");
+        if (!(valid && valid2)) {
+            res.status(503).send("Not authorised");
+        } else {
+            res.status(200).send({
+                "username": req.session.user.username,
+                "role": req.session.user.role,
+                "areas_of_interest": req.session.user.areas_of_interest,
+                "department": req.session.user.department,
+                "lectures_attended": req.session.user.lectures_attended,
+                "lectures_taken": req.session.user.lectures_taken
+            });
+        }
     }
-    else{
-        res.status(200).send(req.session.user);
+    catch (e) {
+        res.status(503).send("Not authorised to use");
     }
 
 });
@@ -185,152 +191,107 @@ app.get("/events", async (req, res) =>{
 
 });
 
-app.post("/events/register-event", async (req, res) =>{
 
-    const {username, role, session_id} = req.body;
-    try{
-        const valid = verifyToken(session_id, username, "student");
-        if(!valid){
-            res.status(403);
-            res.send("You are not authorized to view this page");
-        }
-        else{
-
-            res.status(200);
-            res.send("You can view this page");
-        }
-
-    }
-    catch (e) {
-
-    }
-});
-
-
-app.post("/faculty/create-event", async (req, res) =>{
-    const {username, role, event_details} = req.body;
+app.post("/create-event", async (req, res) =>{
+    /*
+    {
+  "lecture_name": "Introduction to Jira",
+  "lecture_given_by": "Dr. ABC",
+  "position": "TCS Project Lead",
+  "About": "Loreum Ipsum Loreum Ipsum Loreum Ipsum Loreum IpsumLoreum Ipsum Loreum IpsumLoreum Ipsum Loreum Ipsum Loreum Ipsum Loreum Ipsum",
+  "Payment": false,
+  "Fee": 0,
+  "Date": "2023-12-06T09:30:00Z",
+  "Venue": "Online",
+  "link": "www.microsoft-teams.com",
+  "created_by": "administrator",
+  "registered_students": [],
+  "attended_students": []
+}
+     */
+    const {lecture_name, lecture_given_by, position, about, payment, fee, date, venue, link, created_by} = req.body
     try{
         if(req.session.user.role === 'student') {
-            res.status(503).send("Student cannot create events");
+            res.status(401).send("Student cannot create events");
         }
-        if(! (req.session.user.username === username && req.session.user.role === role)) {
-            res.status(503).send("User is not correctly signed in")
+        const client = new MongoClient(uri);
+        await client.connect();
+        const database = await client.db("Guest_Lecture");
+        const lecture = await database.collection("Lectures");
+        const check = await lecture.findOne({lecture_name : lecture_name});
+        if(check){
+            res.status(503).send("Event with this name already exists");
         }
-        else{
-            
 
+        else{
+            if(payment === false) {
+                await lecture.insertOne(
+                    {
+                        lecture_name: lecture_name,
+                        lecture_given_by: lecture_given_by,
+                        position: position,
+                        About: about,
+                        Payment: false,
+                        Fee: 0,
+                        Date: date,
+                        Venue: venue,
+                        link: link,
+                        created_by: req.session.role,
+                        registered_students: [],
+                        attended_students: []
+                    }
+                );
+            }
+            else{
+                await lecture.insertOne(
+                    {
+                        lecture_name: lecture_name,
+                        lecture_given_by: lecture_given_by,
+                        position: position,
+                        About: about,
+                        Payment: true,
+                        Fee: fee,
+                        Date: date,
+                        Venue: venue,
+                        link: link,
+                        created_by: req.session.role,
+                        registered_students: [],
+                        attended_students: []
+                    }
+                );
+            }
+            res.status(200).send("Event created successfully");
         }
 
     }
     catch (e) {
-
+        console.error(e);
+        res.status(503).send("Internal Server Error");
     }
 
 });
 
-app.post("/faculty/view-registrations", async (req, res) =>{
-    const {username, role, session_id} = req.body;
+app.get("/:faculty/:course_name/view-registrations", async (req, res) =>{
+    const faculty_name = req.params.faculty;
+    const course_name =  req.params.course_name;
+    if(req.session.user.username !== faculty_name){
+        res.status(403).send("You are not authorised to view this page");
+    }
+    console.log("We are here");
     try{
-        const valid = verifyToken(session_id, username, "faculty");
-        if(!valid){
-            res.status(403);
-            res.send("You are not authorized to view this page");
-        }
-        else{
-            res.status(200);
-            res.send("You are authorized to view this page");
-        }
+        const client = new MongoClient(uri);
+        await client.connect();
+        const database = await client.db("Guest_Lecture");
+        const lectures = await database.collection("Lectures");
 
+                }
+            }
+        );
     }
     catch (e) {
-
+        console.error(e);
+        res.status(503).send("Internal Server Error")
     }
-
-});
-
-app.post("/admin/dashboard", async (req, res) =>{
-    const {username, role, session_id} = req.body;
-    try{
-        const valid = verifyToken(session_id, username, "admin");
-        if(!valid){
-            res.status(403);
-            res.send("You are not authorized to view this page");
-        }
-        else{
-            res.status(200);
-            res.send("You are authorized to view this page");
-        }
-
-    }
-    catch (e) {
-
-    }
-
-});
-
-app.post("/faculty/dashboard", async (req, res)=>{
-    const {username, role, session_id} = req.body;
-    try{
-        const valid = verifyToken(session_id, username, "faculty");
-        if(!valid){
-            res.status(403);
-            res.send("You are not authorized to view this page");
-        }
-        else{
-            res.status(200);
-            res.send("You are authorized to view this page");
-        }
-
-    }
-    catch (e) {
-
-    }
-
-});
-app.post("/admin/view-users", async(req, res) =>{
-    const {username, role, session_id} = req.body;
-    try{
-        const valid = verifyToken(session_id, username, "admin");
-        if(!valid){
-            res.status(403);
-            res.send("You are not authorized to view this page");
-        }
-        else{
-            const client = new MongoClient(uri);
-            await client.connect();
-            const database = await client.db("Guest_Lecture");
-            const collection = await database.collection("User_information");
-            const data = await collection.find({role:{$in : ["student", "faculty"]}}).toArray();
-            res.status(200);
-            console.log(data);
-            res.status(200);
-            res.send(data);
-        }
-
-    }
-    catch (e) {
-        console.log(e);
-    }
-});
-
-app.post("/admin/create-events", async (req, res)=>{
-    const {username, role, session_id} = req.body;
-    try{
-        const valid = verifyToken(session_id, username, "administrator");
-        if(!valid){
-            res.status(403);
-            res.send("You are not authorized to view this page");
-        }
-        else{
-            res.status(200);
-            res.send("You are authorized to view this page");
-        }
-
-    }
-    catch (e) {
-
-    }
-
 });
 
 app.post("/events/register-event/payment", async (req, res)=>{
@@ -433,87 +394,54 @@ app.post('/verify-otp', (req, res) => {
     }
 });
 
-
-
-// Configure static file serving
-app.use('/public', express.static(path.join(__dirname, 'public')));
-
-// Function to check if the file extension is executable
-function isExecutableExtension(filename) {
-    const executableExtensions = ['.exe', '.sh', '.bat', '.cmd', '.py'];
-    const ext = path.extname(filename).toLowerCase();
-    return executableExtensions.includes(ext);
-}
-
-// Endpoint for file upload
-
-// Configure Multer to store files in the desired folder
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        // Extract the folder name from the request URL
-        const folderName = req.params.folderName;
-        // Set the destination folder path
-        const folderPath = path.join(__dirname, 'uploads', folderName);
-        // Call the callback function with the destination folder path
+        const courseName = req.params.course_name;
+        const folderPath = path.join(__dirname, '../uploads', courseName);
+
+        // Create the folder if it doesn't exist
+        if (!fs.existsSync(folderPath)) {
+            fs.mkdirSync(folderPath, { recursive: true });
+        }
+
         cb(null, folderPath);
     },
     filename: (req, file, cb) => {
-        // Use the original file name as the stored file name
         cb(null, file.originalname);
     },
 });
 
+const upload = multer({ storage });
 
-
-app.post('/uploads/:folderName', upload.single('file'), (req, res) => {
-    // File has been uploaded and stored in the specified folder
-    res.send('File uploaded successfully.');
-});
-
-app.listen(4000, () => {
-    console.log('Server is running on port 4000');
-});
-
-// Endpoint for viewing a file
-app.get('/files/:filename', (req, res, next) => {
-    let filename = req.params.filename;
-
-    // Prevent directory traversal by normalizing the filename
-    filename = path.normalize(filename);
-
-    // Prevent file traversal by checking the filename
-    if (filename.includes('..')) {
-        res.status(400).send('Invalid file name');
-        return;
+app.post('/uploads/:course_name', upload.single('file'), (req, res) => {
+    if (!req.file) {
+        res.status(500).send('File upload failed');
+    } else {
+        res.status(200).send('File uploaded successfully!!!');
     }
+});
 
-    const filePath = path.join(__dirname, 'uploads', filename);
 
-    // Check if the file exists
-    fs.access(filePath, fs.constants.R_OK, (err) => {
+
+
+app.get('/files/:course_name', (req, res) => {
+    const courseName = req.params.course_name;
+    const directoryPath = path.join(__dirname, '../uploads', courseName);
+
+    fs.readdir(directoryPath, (err, files) => {
         if (err) {
-            res.status(404).send('File not found');
-            return;
+            console.error('Error reading directory:', err);
+            res.status(500).send('Internal Server Error');
+        } else {
+            const fileURLs = files.map((file) => {
+                return `${req.protocol}://${req.get('host')}/downloads/${courseName}/${file}`;
+            });
+            res.status(200).send(fileURLs.join('\n'));
         }
-
-        // Prevent command injection by sanitizing the filename
-        const sanitizedFilename = filename.replace(/[^a-z0-9\-_.]/gi, '');
-
-        // Check if the file has an executable extension
-        if (isExecutableExtension(filename)) {
-            res.status(403).send('File cannot be executed');
-            return;
-        }
-
-        // Serve the file using the sanitized filename
-        res.sendFile(sanitizedFilename, { root: path.join(__dirname, 'uploads') }, (err) => {
-            if (err) {
-                next(err);
-            }
-        });
     });
 });
 
+app.use('/downloads', express.static(path.join(__dirname, '../uploads')));
 
 
 
