@@ -62,6 +62,43 @@ app.post('/login', async (req, res) => {
         console.error(e);
     }
 });
+
+
+
+app.post("/:course/register", async (req, res) => {
+    const course_name = req.params.course;
+    try {
+        if (req.session.user.role === "student" || req.session.user.role === "faculty") {
+            const client = new MongoClient(uri);
+            await client.connect();
+            const database = client.db("Guest_Lecture");
+            const lectures = database.collection("Lectures");
+            const lecture = await lectures.findOne({ lecture_name: course_name });
+            console.log(course_name);
+            if (!lecture) {
+                res.status(404).send("Course not found");
+            } else {
+                console.log(req.session.user.username);
+                if (lecture.registered_students.includes(req.session.user.username)) {
+                    res.status(200).send("Student has already registered");
+                } else {
+                    const abc = await lectures.updateOne(
+                        { lecture_name: course_name },
+                        { $push: { registered_students: req.session.user.username } }
+                    );
+                    res.status(200).send("User registered successfully");
+                }
+            }
+            await client.close(); // Close the MongoDB connection
+        } else {
+            res.status(404).send("File not found");
+        }
+    } catch (e) {
+        console.error(e);
+    }
+});
+
+
 app.post("/register", async (req, res) =>{
     const {username, name, email,  role, password, areas_of_interest, department } = req.body;
     const client = new MongoClient(uri);
@@ -278,16 +315,17 @@ app.get("/:faculty/:course_name/view-registrations", async (req, res) =>{
         res.status(403).send("You are not authorised to view this page");
     }
     console.log("We are here");
+    console.log(faculty_name);
+    console.log(course_name);
     try{
         const client = new MongoClient(uri);
         await client.connect();
         const database = await client.db("Guest_Lecture");
         const lectures = await database.collection("Lectures");
-
+        const reg = await lectures.find({ $and: [{ lecture_name: course_name }, { lecture_given_by: faculty_name }] }).project({ registered_students: 1}).toArray();
+        console.log(reg)
+        res.status(200).send(reg)
                 }
-            }
-        );
-    }
     catch (e) {
         console.error(e);
         res.status(503).send("Internal Server Error")
@@ -311,6 +349,24 @@ app.post("/events/register-event/payment", async (req, res)=>{
 
     }
 
+
+});
+
+
+app.post("/:course/attendance",  async (req, res)=> {
+    const {students} = req.body;
+    const course_name = req.params.course
+    try {
+        if (req.session.user.role === 'student') {
+            res.status(403).send("User not authorised to add attendance");
+        } else {
+
+        }
+    }
+    catch (e) {
+        console.log(e)
+        res.status(503).send("Internal Server Error")
+    }
 
 });
 function send_otp(email, username){
