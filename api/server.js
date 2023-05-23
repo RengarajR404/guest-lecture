@@ -73,6 +73,7 @@ app.post("/:course/register", async (req, res) => {
             await client.connect();
             const database = client.db("Guest_Lecture");
             const lectures = database.collection("Lectures");
+            const users = database.collection("User_information");
             const lecture = await lectures.findOne({ lecture_name: course_name });
             console.log(course_name);
             if (!lecture) {
@@ -82,10 +83,14 @@ app.post("/:course/register", async (req, res) => {
                 if (lecture.registered_students.includes(req.session.user.username)) {
                     res.status(200).send("Student has already registered");
                 } else {
-                    const abc = await lectures.updateOne(
-                        { lecture_name: course_name },
-                        { $push: { registered_students: req.session.user.username } }
+                    const cde = await users.updateOne(
+                        { username: req.session.user.username },
+                        { $push: { lectures_registered: course_name } }
                     );
+                    await lectures.updateOne(
+                        { lecture_name: course_name },
+                        { $push: { registered_students: req.session.user.username } });
+
                     res.status(200).send("User registered successfully");
                 }
             }
@@ -360,7 +365,19 @@ app.post("/:course/attendance",  async (req, res)=> {
         if (req.session.user.role === 'student') {
             res.status(403).send("User not authorised to add attendance");
         } else {
-
+            const client = new MongoClient(uri);
+            await client.connect();
+            const database = client.db("Guest_Lecture");
+            const lectures = database.collection("Lectures");
+            const users = database.collection("User_information");
+            //const cde = await users.updateOne(
+                //{ username: req.session.user.username },
+                //{ $push: { lectures_attended: course_name } }
+            //);
+            console.log(students);
+            await lectures.updateOne(
+                { lecture_name: course_name },{ $push: { attended_students: {$each : students} } });
+            res.status(200).send("User registered successfully");
         }
     }
     catch (e) {
